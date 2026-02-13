@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+	<head>
+		<style>
+			#myImage {
+				transition: transform 0.5s; /* 平滑过渡效果 */
+			}
+		</style>
+		<script>
+			function rotateImage() {
+				var img = document.getElementById("myImage");
+				if (img.style.transform === "rotate(0deg)") {
+					img.style.transform = "rotate(90deg)";
+				} 
+				else if((img.style.transform === "rotate(90deg)")){
+					img.style.transform = "rotate(180deg)";
+				}
+				else if((img.style.transform === "rotate(180deg)")){
+					img.style.transform = "rotate(270deg)";
+				}
+				else{
+					img.style.transform = "rotate(0deg)";
+				}
+			}
+		</script>
+	</head>
+    <body>
+        <div class="container">
+            <h1>Simple image search engine</h1>
+            <form action="/" method="POST" enctype="multipart/form-data">
+                <input type="file" name="query_img"><br>
+                <input type="submit">
+            </form>
+            <h2>Query:</h2>
+            {% if query_path %}
+            <img src="{{ query_path }}" width="300px" id="myImage" onclick="rotateImage()">
+            {% endif %}
+			<input type="text" class="input" placeholder="请输入有效的信息" id="searchinput" />
+			<button onclick="createsearch()">Search</button>
+			
+			<a href='/a?file={{ next_file }}' ><b> {{ next_file }}</b> </a>
+            <h2>Results:</h2>
+            {% for score in scores %}
+            <figure style="float: left; margin-right: 20px; margin-bottom: 20px;">
+                <img src="{{ score[1] }}" height="200px" onclick=deal("{{ score[1] }}")  loading="lazy">
+                <figcaption>{{ score[0] }}<br>{{ score[1] }}<br>{{ score[2] }}<br>{{ score[3] }}</figcaption>
+            </figure>
+            {% endfor %}
+        </div>
+    </body>
+	<script>
+		//<img id="image" src="https://example.com/placeholder.jpg" alt="图片" crossOrigin="Anonymous">
+	{% if query_path %}
+	console.log("{{ query_path }}");
+	{% endif %}
+	function deal(a){
+	
+      var url = "/p";
+      var data = ["{{ query_path }}",a];
+	console.log(data);
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.DONE) {
+          if (xhr.status === 200) {
+            console.log("POST 请求成功", xhr.responseText,"{{ query_path }}",a);
+            // 在这里处理成功的响应
+          } else {
+            alert(["POST 请求失败",xhr.responseText, xhr.status,"{{ query_path }}",a]);
+            // 在这里处理错误
+          }
+        }
+		}
+	xhr.send(JSON.stringify(data));
+	console.log(JSON.stringify(data));
+	}
+	function createsearch(){
+		window.location.href ='/a?file='+"{{ query_path }}".replace('static/uploaded/','')+'&keywords='+document.getElementById("searchinput").value;
+	}
+	
+    document.addEventListener("keydown", function(event) {
+      if (event.key === "Enter") {
+	  createsearch()
+	  }
+	  })
+	</script>
+</html>
+
+
