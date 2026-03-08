@@ -41,7 +41,7 @@
             <h2>Results:</h2>
             {% for score in scores %}
             <figure style="float: left; margin-right: 20px; margin-bottom: 20px;">
-                <img src="{{ score[1] }}" height="200px" onclick=deal("{{ score[1] }}") loading="lazy">
+                <img src="/img?file={{ score[1] }}" height="200px" onclick=deal("{{ score[1] }}") loading="lazy">
                 <figcaption>{{ score[0] }}<br>{{ score[1] }}<br>{{ score[2] }}<br>{{ score[3] }}</figcaption>
             </figure>
             {% endfor %}

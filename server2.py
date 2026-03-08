@@ -4,7 +4,7 @@ import torch
 from feature_extractor import FeatureExtractor1,FeatureExtractor2,FeatureExtractor5, FeatureExtractor6
 from datetime import datetime
 import time
-from flask import Flask, request, render_template,jsonify
+from flask import Flask, request, render_template,jsonify, send_file
 from pathlib import Path
 import argparse
 import shutil,os,json,requests,cv2
@@ -26,15 +26,32 @@ app = Flask(__name__)
 ##    res.headers['Access-Control-Allow-Headers'] = 'x-requested-with,content-type'
 ##    return res
 
-def convert_image_path1(dst):
-    dst_s=dst.split('.')
-    assert len(dst_s)==2,dst
+def move_img(src_img,dst_img):
+    _,postfix=src_img.split('.')
+    if 'surugaya' in dst_img:
+        site='surugaya'
+        assert 'doujinshiorg' not in dst_img,(dst_img,src_img)
+    elif 'doujinshiorg' in dst_img:
+        site='doujinshiorg'
+    else:
+        raise ValueError((dst_img,src_img))
+    
+    code=os.path.basename(dst_img).split('_')[0].split('.')[0]
     a=0
     while True:
-        new_dst=f'{dst_s[0]}_{a}.{dst_s[1]}'
+        new_dst=f'static/result/{site}_{code}_{a}.{postfix}'
         if not os.path.exists(new_dst):
-            return  new_dst
+            return  shutil.move(src_img,new_dst)
         a+=1
+# def convert_image_path1(dst):
+#     dst_s=dst.split('.')
+#     assert len(dst_s)==2,dst
+#     a=0
+#     while True:
+#         new_dst=f'{dst_s[0]}_{a}.{dst_s[1]}'
+#         if not os.path.exists(new_dst):
+#             return  new_dst
+#         a+=1
 
         
 def convert_image_path2(dst):
@@ -49,27 +66,12 @@ def convert_image_path2(dst):
         l.append(new_dst)
         a+=1
 
+def get_score(img,keyword=None):
+    return new_model.search(img,keyword=keyword)
 
-
-# def get_score(img):
-#     query = fe.extract(img)
-# ####        dists = np.linalg.norm(features-query, axis=1)  # L2 distances to features
-# ##    print(query.shape,features.shape)
-# ##    dists=-np.mean(features*query,axis=1)/np.sqrt((np.mean(features**2,axis=1)*np.mean(query**2)))
-# ##    print(dists.shape)
-# ##    ids = np.argsort(dists)[:30]  # Top 30 results
-#     sim=features@query
-# ##    app.logger.info(str((sim.shape,sim.max(),sim.min(),sim.mean())))
-#     ids = np.argsort(-sim)[:30]
-    
-#     scores = [(sim[id], '/'.join(['static','img2',l2[id][0]+'_'+l2[id][1]+'.jpg']),l2[id][2]) for id in ids]
-#     return scores
-def get_score(img):
-    return new_model.search(img)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    print('a')
     if request.method == 'POST':
         # file = request.files['query_img']
         filepath=request.form.get('filepath',None)
@@ -88,50 +90,32 @@ def index():
     else:
         return render_template('index1.html')
 
+@app.route('/img', methods=['GET'])
+def get_image():
+    filename=request.args.get('file',None)
+    if filename and os.path.exists(filename):
+        return send_file(filename, mimetype='image/jpeg')
+    else:
+        return jsonify({'error': 'File not found'}), 404
 #
 @app.route('/p', methods=[ 'GET','POST'])
 def index2():
     if request.method == 'POST':
         data = request.get_json()
-        shutil.move(data[0],convert_image_path1(data[1].replace('img2','result')))
+        # shutil.move(data[0],convert_image_path1(data[1].replace('img2','result')))
+        move_img(data[0],data[1])
         return jsonify([])
     else:
         filename=request.args.get('file',None)
         keywords=request.args.get('keywords',None)
         assert keywords,[filename,keywords]
-        if filename:
-            dis=[i.item() for i in new_model.cal(Image.open(filename))]
-        else:
-            dis=[0 for _ in range(len(new_model.filenames))]
+        # if filename:
+        #     dis=[i.item() for i in new_model.cal(Image.open(filename))]
+        # else:
+        #     dis=[0 for _ in range(len(new_model.filenames))]
         keywords=keywords.lower()
-        scores=[]
         uploaded_img_path=filename
-        for j,d in enumerate(merged_data):
-            title=d['title']
-            if keywords not in title.lower():
-                continue
-            print(title,[d['surugaya_code'],d['doujinshiorg_code']])
-            s=''
-            if d['surugaya_code'] and d['surugaya_code'] in bought_items:
-                s=f'{bought_items[d["surugaya_code"]]} '
-            s=f'{s} {d["surugaya_code"] and d["surugaya_code"] in bought_items2} {d["surugaya_code"] and d["surugaya_code"] in bought_items2} {bought_filenames.get(d["surugaya_code"],[])} {bought_filenames.get(d["doujinshiorg_code"],[])}  {d['surugaya_code']} {d["doujinshiorg_code"]} {j}'
-            for i in [d['surugaya_code'],d['doujinshiorg_code']]:
-                if i:
-                    if i in surugaya_data:
-                        s=f'{surugaya_data[i]["date_price"].get(surugaya_sorted_date[-1], None)} {s} '
-                    for id_,filename in enumerate(new_model.filenames):
-                        a=filename.split('/')
-                        b=a[-3]
-                        assert b in ['surugaya','doujinshiorg'],f'{filename} {a}'
-                        c=a[-1].split('_')[0].split('.')[0]
-                        if c.lower()==i.lower():
-                            scores.append([dis[id_].item(), '/'.join(['static','img2',b+'_'+c+'.jpg']),title,s])
-                            break
-                    else:
-                        print((i,keywords,d))
-                        scores.append([dis[id_].item(), None,title,s])
-        print(len(scores))
-        scores.sort(key=lambda x:-x[0])
+        scores=get_score(Image.open(filename) if filename else None,keyword=keywords)
         # else:
         #     img_req = requests.get('http://192.168.101.17:8080//' + 'shot.jpg')
         #     img_arr = np.array(bytearray(img_req.content), dtype=np.uint8)
@@ -195,7 +179,8 @@ def region_search():
 def index3():
     if request.method == 'POST':
         data = request.get_json()
-        shutil.move(data[0],data[1].replace('img2','result'))
+        # shutil.move(data[0],data[1].replace('img2','result'))
+        move_img(data[0],data[1])
         return jsonify([])
     else:
         file_list=os.listdir('static/uploaded/')
@@ -206,17 +191,8 @@ def index3():
             filename=file_list[0]
         index=file_list.index(filename)
         next_file=file_list[(index+1)%len(file_list)]
-        scores=[]
-        if keywords:
-            keywords=keywords.lower()
-            query = fe.extract(Image.open('static/uploaded/'+filename))
-            for j,i in enumerate(l2):
-                if keywords in i[3].lower():
-                    scores.append([features[j]@query,f'static/img2/{i[0]}_{i[1]}.jpg',i[2],i[3],s])
-            scores.sort(key=lambda x:-x[0])
-            
-        else:
-            scores=get_score(Image.open(os.path.join('static/uploaded/',filename)))
+        filepath=os.path.join('static','uploaded',filename)
+        scores=get_score(Image.open(filepath),keyword=keywords)
             
         
         return render_template('index3.html',
@@ -231,50 +207,74 @@ class model:
         data=torch.load('features.pt')
 
         self.filenames=data['filenames']
+        self.titles=[]
+
+        self.name_map={}
+
+        for i,d in enumerate(merged_data):
+            for j in ['surugaya','doujinshiorg']:
+                k=d[f'{j}_code']
+                if k:
+                    self.name_map[(j,k.lower())]=i
+        for filename in self.filenames:
+            a=filename.split('/')
+            b=a[-3]
+            assert b in ['surugaya','doujinshiorg'],f'{filename} {a}'
+            c=a[-1].split('_')[0].split('.')[0]
+            
+            self.titles.append(merged_data[self.name_map[(b,c.lower())]]['title'])
         self.func=lambda x:(x-x.mean(dim=1,keepdim=True))/(x.std(dim=1,keepdim=True)+1e-8)
         self.func3=lambda a,b:-torch.cosine_similarity(a, b, dim=-1)
         self.name_features={k:self.func(v[:len(self.filenames)])[:,None] for k,v in data['name_features'].items() if k in self.name_extractor2}
 
         self.data_dir=r'D:\marimite\doujin\doujinshidata'
 
-
     def cal(self,img):
         dis=0
         for name,fe in self.name_extractor2.items():
-            dis+=self.func3(self.name_features[name], self.func(fe.extract(img)[None])[None])
-        # print(self.name_features[name][:5,:5],self.func(fe.extract(img)[None])[:5,:5])
-        return dis
+            dis+=self.func3(self.name_features[name], self.func(fe.extract(img,rotate=True))[None])
+        return dis.min(dim=1,keepdim=True).values
     
-    def search(self,img,num=30):
-        dis=self.cal(img)
-        ids = torch.argsort(dis,dim=0,descending=False)[:num,0]
-        print(ids.shape,dis.shape,ids)
+    def search(self,img,num=30,keyword=None):
+        assert keyword or img, 'keyword or img should be provided'
+        if img:
+            dis=self.cal(img)
+        else:
+            dis=[0 for _ in range(len(self.filenames))]
+        if keyword:
+            keyword=keyword.lower()
+            ids=[i for i,title in enumerate(self.titles) if keyword in title.lower()]
+        else:
+            ids = torch.argsort(dis,dim=0,descending=False)[:num,0]
+        if img:
+            dis=[i.item() for i in dis]
+        # print(ids.shape,dis.shape,ids)
+        print(len(ids))
         scores=[]
-        for id in ids:
-            filename=self.filenames[id]
+        for id_ in ids:
+            filename=self.filenames[id_]
             a=filename.split('/')
             b=a[-3]
             assert b in ['surugaya','doujinshiorg'],f'{filename} {a}'
             c=a[-1].split('_')[0].split('.')[0]
-            for i,d in enumerate(merged_data):
-                if (d['surugaya_code'] and d['surugaya_code'].lower()==c) or (d['doujinshiorg_code'] and d['doujinshiorg_code'].lower()==c):
-                    title=d['title']
-                    s=''
-                    if d['surugaya_code']:
-                        s=f'{surugaya_data[d["surugaya_code"]]["date_price"].get(surugaya_sorted_date[-1], None)} {bought_items.get(d["surugaya_code"],None)} '
-                    s=f'{s} {d["surugaya_code"] and d["surugaya_code"] in bought_items2} {bought_filenames.get(d["surugaya_code"],[])} {bought_filenames.get(d["doujinshiorg_code"],[])} {d['surugaya_code']} {d["doujinshiorg_code"]} {i}'
-                    scores.append([dis[id].item(), '/'.join(['static','img2',b+'_'+c+'.jpg']),title,s])
-                    break
-            else:
-                raise ValueError(f'{c} {filename} not found in merged_data')
+            i=self.name_map[(b,c.lower())]
+            d=merged_data[i]
+            title=d['title']
+            s=''
+            if d['surugaya_code']:
+                s=f'{surugaya_data[d["surugaya_code"]]["date_price"].get(surugaya_sorted_date[-1], None)} {bought_items.get(d["surugaya_code"],None)} '
+            s=f'{s} {d["surugaya_code"] and d["surugaya_code"] in bought_items2} {bought_filenames.get(d["surugaya_code"],[])} {bought_filenames.get(d["doujinshiorg_code"],[])} {d['surugaya_code']} {d["doujinshiorg_code"]} {i}'
+            scores.append([dis[id_], os.path.join(self.data_dir,filename),title,s])
+            # scores.append([dis[id_], '/'.join(['static','img2',b+'_'+c+'.jpg']),title,s])
+        scores.sort(key=lambda x:x[0],reverse=False)#from small to large
         return scores
         
-new_model=model('cpu')
 if __name__=="__main__":
     data_dir=r'D:\marimite\doujin\doujinshidata'
     with open(os.path.join(data_dir,'data_merged.json'),'r',encoding='utf-8') as f:
         merged_data=json.load(f)
     print(len(merged_data))
+    new_model=model('cpu')
     with open(r'D:\chrome_download\surugaya_all_bought.json','r',encoding='utf-8') as f:
         bought_data=json.load(f)
     bought_items=bought_data['bought_items']
@@ -295,44 +295,4 @@ if __name__=="__main__":
         surugaya_date_set.update(i['date_price'])
 
     surugaya_sorted_date=sorted(surugaya_date_set)
-#     fe=FeatureExtractor2('checkpoint_0100.pth.tar','cpu')
-#     l1=[]
-#     l2=[]
-#     features = []
-#     for i,a in enumerate(merged_data):
-#         doujinshiorg_code=a['doujinshiorg_code']
-#         surugaya_code=a['surugaya_code']
-#         if surugaya_code:
-#             l1.append(['surugaya',surugaya_code,i,a['title']])
-#         if doujinshiorg_code:
-#             l1.append(['doujinshiorg',doujinshiorg_code,i,a['title']])
-
-#     feature_path=os.path.join('static','feature')
-#     if not os.path.exists(feature_path):
-#         os.mkdir(feature_path)
-#     for i in l1:
-#         path=os.path.join(data_dir,i[0],'picture',i[1]+('_0' if i[0]=='doujinshiorg' else '')+'.jpg')
-#         if not os.path.exists(path):
-#             print(path)
-#             continue
-#         l2.append(i)
-#         path2=os.path.join('static','img2',i[0]+'_'+i[1]+'.jpg')
-#         if not os.path.exists(path2):
-#             shutil.copy(path,path2)
-#         path3=os.path.join(feature_path,i[0]+'_'+i[1]+'.npy')
-
-#         if os.path.exists(path3):
-#             feature=np.load(path3)
-#         else:
-#             feature=fe.extract(img=Image.open(path2))
-#             np.save(path3, feature)
-        
-# ##        feature=fe.extract(img=Image.open(path2))
-        
-#         features.append(feature)
-#     print(len(l1),len(l2))
-#     features = np.array(features)
-#     print(features.shape)
-#     a=features@features.T
-#     print(a.shape,a.max(),a.min(),a.mean())
     app.run(port=5002,debug=True)
