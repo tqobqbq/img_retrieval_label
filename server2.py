@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 from PIL import Image
 import torch
 from feature_extractor import FeatureExtractor1,FeatureExtractor2,FeatureExtractor5, FeatureExtractor6
@@ -11,7 +11,8 @@ import shutil,os,json,requests,cv2
 import logging
 import io
 import base64
-
+import threading
+from collections import OrderedDict
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
@@ -76,19 +77,19 @@ def index():
         # file = request.files['query_img']
         filepath=request.form.get('filepath',None)
         filename=filepath.split('/')[-1].split('\\')[-1]
-        img=Image.open(filepath).convert('RGB')
+        # img=Image.open(filepath).convert('RGB')
         # # Save query image
         # img = Image.open(file.stream).convert('RGB')  # PIL image
         uploaded_img_path = "static/uploaded/" + datetime.now().isoformat().replace(":", ".") + "_" + filename
         # img.save(uploaded_img_path)
         shutil.copy2(filepath,uploaded_img_path)
-        scores=get_score(img)
+        scores=get_score(filepath)
 
         return render_template('index1.html',
                                query_path=uploaded_img_path,
                                scores=scores)
     else:
-        return render_template('index1.html')
+        return render_template('index_unified.html')
 
 @app.route('/img', methods=['GET'])
 def get_image():
@@ -115,7 +116,7 @@ def index2():
         #     dis=[0 for _ in range(len(new_model.filenames))]
         keywords=keywords.lower()
         uploaded_img_path=filename
-        scores=get_score(Image.open(filename) if filename else None,keyword=keywords)
+        scores=get_score(filename,keyword=keywords)
         # else:
         #     img_req = requests.get('http://192.168.101.17:8080//' + 'shot.jpg')
         #     img_arr = np.array(bytearray(img_req.content), dtype=np.uint8)
@@ -192,14 +193,104 @@ def index3():
         index=file_list.index(filename)
         next_file=file_list[(index+1)%len(file_list)]
         filepath=os.path.join('static','uploaded',filename)
-        scores=get_score(Image.open(filepath),keyword=keywords)
+        scores=get_score(filepath,keyword=keywords)
             
-        
+        next_path = os.path.join('static','uploaded',next_file)
+        new_model.precompute_dis_async(next_path)
         return render_template('index3.html',
                                query_path='static/uploaded/'+filename,
                                scores=scores,
                                next_file=next_file)
     
+
+@app.route('/api/search', methods=['POST'])
+def api_search():
+    filepath = request.form.get('filepath', None)
+    keyword = request.form.get('keyword', None)
+    query_path_existing = request.form.get('query_path', None)
+    file = request.files.get('query_img', None)
+
+    query_path = None
+    next_file = None
+
+    if filepath:
+        # Method 1: File path upload - copy to uploaded and find next file
+        filename = filepath.split('/')[-1].split('\\')[-1]
+        uploaded_img_path = "static/uploaded/" + datetime.now().isoformat().replace(":", ".") + "_" + filename
+        shutil.copy2(filepath, uploaded_img_path)
+        query_path = filepath
+
+        # Find next image in same directory
+        try:
+            parent_dir = os.path.dirname(filepath)
+            siblings = sorted([f for f in os.listdir(parent_dir)
+                               if f.lower().endswith(('.jpg','.jpeg','.png','.bmp','.gif','.webp'))])
+            basename = os.path.basename(filepath)
+            if basename in siblings:
+                idx = siblings.index(basename)
+                next_name = siblings[(idx + 1) % len(siblings)]
+                next_file = os.path.join(parent_dir, next_name)
+                new_model.precompute_dis_async(next_file)
+        except Exception:
+            pass
+    elif file:
+        # Method 2: Whole image file upload
+        img = Image.open(file.stream).convert('RGB')
+        uploaded_img_path = "static/uploaded/" + datetime.now().isoformat().replace(":", ".") + "_" + file.filename
+        img.save(uploaded_img_path)
+        query_path = uploaded_img_path
+    elif query_path_existing:
+        # Keyword re-search with existing query path
+        query_path = query_path_existing
+
+    if keyword and not query_path:
+        # Keyword-only search
+        scores = new_model.search(None, keyword=keyword)
+    elif keyword:
+        scores = new_model.search(query_path, keyword=keyword)
+    else:
+        scores = get_score(query_path)
+
+    results = [{'score': s[0], 'path': s[1], 'title': s[2] if len(s) > 2 else '', 'info': s[3] if len(s) > 3 else ''} for s in scores]
+    resp = {'query_path': query_path or '', 'results': results}
+    if next_file:
+        resp['next_file'] = next_file
+    return jsonify(resp)
+
+
+@app.route('/api/upload_image', methods=['POST'])
+def api_upload_image():
+    file = request.files['image']
+    img = Image.open(file.stream).convert('RGB')
+    uploaded_img_path = "static/uploaded/" + datetime.now().isoformat().replace(":", ".") + "_" + file.filename
+    img.save(uploaded_img_path)
+    return jsonify({'path': uploaded_img_path})
+
+
+@app.route('/api/search_region', methods=['POST'])
+def api_search_region():
+    file = request.files['region_img']
+    region_info = request.form.get('region_info', '{}')
+    img = Image.open(file.stream).convert('RGB')
+
+    # Save cropped region
+    uploaded_img_path = "static/uploaded/" + datetime.now().isoformat().replace(":", ".") + "_region.jpg"
+    img.save(uploaded_img_path)
+
+    scores = get_score(img)
+    results = [{'score': s[0], 'path': s[1], 'title': s[2] if len(s) > 2 else '', 'info': s[3] if len(s) > 3 else ''} for s in scores]
+
+    # Generate base64 preview of the cropped region
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG")
+    cropped_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+    return jsonify({
+        'query_path': uploaded_img_path,
+        'cropped_image': 'data:image/jpeg;base64,' + cropped_b64,
+        'results': results
+    })
+
 class model:
     def __init__(self,device='cpu'):
         self.name_extractor2={'dinov2_vitl14_pretrain':FeatureExtractor5(device=device),'dinov3_vith16plus':FeatureExtractor6(device=device),'resnet18_simclr_checkpoint_0100':FeatureExtractor2('checkpoint_0100.pth.tar',device=device)}
@@ -229,12 +320,51 @@ class model:
 
         self.data_dir=r'D:\marimite\doujin\doujinshidata'
 
+
+        
+        self.dis_cache = OrderedDict()
+        self.caling_set=set()
+        self.cache_size = 5
+        self.cache_lock = threading.Lock()
+
     def cal(self,img):
-        dis=0
-        for name,fe in self.name_extractor2.items():
-            dis+=self.func3(self.name_features[name], self.func(fe.extract(img,rotate=True))[None])
-        return dis.min(dim=1,keepdim=True).values
+        if isinstance(img, str):
+            with self.cache_lock:
+                if img in self.dis_cache:
+                    return self.dis_cache[img]
+            if img in self.caling_set:
+                count=0
+                while True:
+                    with self.cache_lock:
+                        if img in self.dis_cache:
+                            return self.dis_cache[img]
+                    time.sleep(0.1)
+                    count+=1
+                    if count>300:
+                        raise TimeoutError(f'cal timeout for {img}')
+                    
+            with self.cache_lock:
+                self.caling_set.add(img)
+            dis=0
+            img2=Image.open(img)
+            for name,fe in self.name_extractor2.items():
+                dis+=self.func3(self.name_features[name], self.func(fe.extract(img2,rotate=True))[None])
+            res=dis.min(dim=1,keepdim=True).values
+            with self.cache_lock:
+                self.caling_set.discard(img)
+                self.dis_cache[img]=res
+                if len(self.dis_cache)>self.cache_size:
+                    self.dis_cache.popitem(last=False)
+        else:
+            dis=0
+            img2=img
+            for name,fe in self.name_extractor2.items():
+                dis+=self.func3(self.name_features[name], self.func(fe.extract(img2,rotate=True))[None])
+            res=dis.min(dim=1,keepdim=True).values
+        return res
     
+    def precompute_dis_async(self,img):
+        threading.Thread(target=self.cal,args=(img,)).start()
     def search(self,img,num=30,keyword=None):
         assert keyword or img, 'keyword or img should be provided'
         if img:

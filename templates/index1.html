@@ -86,7 +86,11 @@
 	
 	
 	function createsearch(){
-		window.location.href ='/p?file='+"{{ query_path }}"+'&keywords='+document.getElementById("searchinput").value;
+    query_path="{{ query_path }}";
+    if (query_path=="None"){
+      query_path="";
+    }
+		window.location.href ='/p?file='+ query_path +'&keywords='+document.getElementById("searchinput").value;
 	}
 	
 	
